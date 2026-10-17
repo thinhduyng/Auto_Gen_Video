@@ -2,7 +2,7 @@ import { loadFont } from "@remotion/fonts";
 import React from "react";
 import { AbsoluteFill, Audio, Img, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { DiagramLayer, sceneAlpha } from "./Diagram";
-import { Beat, C, FONT, Props, Scene, clamp, out3 } from "./lib";
+import { Beat, C, FONT, Props, Scene, clamp, out3, sceneEntrance } from "./lib";
 import { BulletsScene, Captions, CompareScene, Head, NextScene, StatScene, TipScene, TitleScene } from "./Scenes";
 
 loadFont({ family: "BVP", url: staticFile("fonts/BeVietnamPro-Medium.ttf"), weight: "500" });
@@ -94,16 +94,18 @@ export const Academic: React.FC<Props> = (props) => {
       {scenes.map((s, i) => {
         const a = sceneAlpha(t, s.start, s.end);
         if (a <= 0) return null;
-        const pin = s.start <= 0.001 ? 1 : out3(clamp((t - s.start) / 0.4));
+        const entrance = sceneEntrance(t, s);
         return (
-          <div key={i} style={{ position: "absolute", left: 70, right: 70, top: 220, height: 1180, opacity: a, transform: `translateY(${(1 - pin) * 40}px)` }}>
+          <div key={i} style={{ position: "absolute", left: 70, right: 70, top: 220, height: 1180, ...entrance, opacity: a * Number(entrance.opacity ?? 1) }}>
             {renderScene(s, t, props)}
           </div>
         );
       })}
       {groups.map((g, i) => {
         const a = sceneAlpha(t, g.start, g.end);
-        return a > 0 ? <DiagramLayer key={i} diagram={diagrams[g.id]} scenes={scenes} id={g.id} t={t} opacity={a} /> : null;
+        const active = scenes.find((s) => s.diagram === g.id && t >= s.start && t < s.end);
+        const entrance = active ? sceneEntrance(t, active) : {};
+        return a > 0 ? <AbsoluteFill key={i} style={entrance}><DiagramLayer diagram={diagrams[g.id]} scenes={scenes} id={g.id} t={t} opacity={a} /></AbsoluteFill> : null;
       })}
       <Captions data={props.data} t={t} />
       {props.audio ? <Audio src={staticFile(props.audio)} /> : null}

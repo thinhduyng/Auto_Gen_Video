@@ -16,6 +16,7 @@ class Replacement(BaseModel):
     source_id: str | None = None
     scene: dict | None = None
     image_asset_id: str | None = None
+    stock_query: str | None = Field(default=None, min_length=2, max_length=200)
     animation: Literal['default', 'fade', 'slide', 'zoom', 'stagger'] | None = None
     hold_seconds: float | None = Field(default=None, ge=0, le=15, allow_inf_nan=False)
 
@@ -38,6 +39,8 @@ def validate_plan(raw: dict, bundles: list[dict], selected: list[str], assets: s
     if not selected or any(s not in sources for s in selected):
         raise ValueError('Cảnh đã chọn không tồn tại.')
     for r in plan.replacements:
+        if r.image_asset_id and r.stock_query:
+            raise ValueError('Chỉ chọn ảnh tải lên hoặc ảnh stock cho mỗi cảnh.')
         if r.source_id is not None and r.source_id not in selected:
             raise ValueError('Qwen đề xuất thay đổi ngoài các cảnh đã chọn.')
         if r.image_asset_id is not None and r.image_asset_id not in assets:
@@ -67,7 +70,7 @@ def validate_scene(scene: dict) -> None:
             raise ValueError('Nội dung cảnh quá phức tạp.')
         if isinstance(node, dict):
             for k, v in node.items():
-                if k in ('src', 'url', 'path', '__html', 'style', 'code'):
+                if k in ('src', 'url', 'path', '__html', 'code') or (k == 'style' and v not in ('solid', 'flow', 'blocked')):
                     raise ValueError('Cảnh chứa tham chiếu hoặc mã không được hỗ trợ.')
                 if k in ('cue', 'answer_cue') and v and v not in say:
                     raise ValueError('Cue phải trích nguyên văn từ lời đọc của cảnh.')
@@ -82,6 +85,27 @@ def validate_scene(scene: dict) -> None:
         elif isinstance(node, float) and not math.isfinite(node):
             raise ValueError('Số không hợp lệ.')
     walk(scene)
+    for key in ('heading','title','sub','tag','question','answer','label','kicker','q_label','a_label'):
+        if key in scene and not isinstance(scene[key],str):
+            raise ValueError('Chữ hiển thị phải là chuỗi.')
+    if 'headline' in scene:
+        h=scene['headline']
+        if not isinstance(h,list) or not 1 <= len(h) <= 12 or any(
+            not isinstance(x,list) or len(x)!=2 or not isinstance(x[0],str) or not isinstance(x[1],bool) for x in h):
+            raise ValueError('headline cần danh sách [chữ, tô màu].')
+    for key, required in (('items',('text',)),('chips',('text',)),('stats',('value','label'))):
+        if key in scene:
+            values=scene[key]
+            if not isinstance(values,list) or len(values)>8 or any(not isinstance(x,dict) or
+                any(not isinstance(x.get(k),(str,int,float)) for k in required) for x in values):
+                raise ValueError('Danh sách chữ/số không hợp lệ hoặc quá nhiều mục.')
+    for side in ('left','right'):
+        if side in scene:
+            obj=scene[side]
+            if not isinstance(obj,dict) or not isinstance(obj.get('title'),str) or not isinstance(obj.get('points',[]),list) or any(
+                not isinstance(v,str) for v in obj.get('points',[])):
+                raise ValueError('Cột so sánh cần tiêu đề và danh sách chuỗi.')
+
 
 
 def shift_scene(scene: dict, offset: float) -> dict:
@@ -107,6 +131,12 @@ def assemble(bundles: list[dict], meta: dict, diagrams: dict) -> dict:
         s.update(id=b['id'], start=start, end=end)
         if b.get('animation'):
             s['animation'] = b['animation']
+            if b['animation'] == 'stagger':
+                for field in ('items', 'stats', 'chips'):
+                    for n, item in enumerate(s.get(field, [])):
+                        if isinstance(item, dict):
+                            item['t'] = min(end - 1 / FPS, start + .15 + n * min(.45, (end-start)/max(2,len(s[field])+1)))
+
         data['scenes'].append(s)
         base = len(data['words'])
         for w in b['words']:

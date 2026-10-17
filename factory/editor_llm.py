@@ -18,7 +18,8 @@ scenes are immutable. source_id must be one of the selected IDs, or null for a n
 For text/layout/narration edits supply a COMPLETE canonical scene in scene; preserve say verbatim
 unless the user asks to change narration. For image/animation-only edits omit scene. Image IDs
 must be in attached_assets; do not invent paths or URLs. image_asset_id replaces the whole scene
-background. Uploaded images may instead be visual references: interpret the user's intent.
+background. stock_query optionally searches a replacement stock photo (English keywords);
+never combine stock_query and image_asset_id. Uploaded images may instead be visual references: interpret the user's intent.
 Supported animations: default, fade, slide, zoom, stagger. hold_seconds is EXTRA silence/visual
 hold after narration, 0..15; it never truncates speech. Scene lengths may change with narration.
 Supported scene types and fields:

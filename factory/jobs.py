@@ -143,8 +143,7 @@ def select(job_id: str, engine: str, revision_id: str | None = None) -> dict:
             raise ValueError("engine này chưa có video hoàn chỉnh")
         spec = Spec.model_validate(json.loads((_job_dir(job_id) / "spec.json").read_text(encoding="utf-8")))
         out_dir = PUBLISH_DIR / job_id
-        shutil.rmtree(out_dir, ignore_errors=True)
-        out_dir.mkdir(parents=True)
+        out_dir.mkdir(parents=True, exist_ok=True)
         name = slugify(f"{spec.series or ''} {spec.ep or ''} {spec.title}", 70)
         video = out_dir / f"{name}.mp4"
         source = _job_dir(job_id) / engine / "video.mp4"
@@ -153,9 +152,15 @@ def select(job_id: str, engine: str, revision_id: str | None = None) -> dict:
             if engine != "remotion" or editor.revision(job_id, revision_id)["status"] != "ready":
                 raise ValueError("Phiên bản chưa sẵn sàng.")
             source = editor.revision_dir(job_id, revision_id) / "video.mp4"
-        shutil.copy2(source, video)
+        if not source.is_file():
+            raise ValueError("Không tìm thấy video của phiên bản này.")
+        pending_video = video.with_suffix(".pending.mp4")
+        shutil.copy2(source, pending_video)
+        pending_video.replace(video)
         caption = caption_text(spec)
         credits = _job_dir(job_id) / engine / "credits.txt"   # ảnh Wikimedia Commons: ghi nguồn theo giấy phép
+        if revision_id is not None:
+            credits = source.parent / "credits.txt"
         if credits.exists():
             caption += "\n\n" + credits.read_text(encoding="utf-8").strip()
         (out_dir / "caption.txt").write_text(caption, encoding="utf-8")

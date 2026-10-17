@@ -150,3 +150,67 @@ class ApiTests(StoreTests):
             with self.assertRaises(ValueError):
                 jobs.rerun('job', 'remotion')
         self.assertTrue((self.root / 'job/editor/state.json').exists())
+
+class MediaTests(unittest.TestCase):
+    def test_localization_and_reassembly_keep_caption_indices_and_diagram_cues(self):
+        from factory.editor_media import localize
+        data = {'meta': {'title':'Test'}, 'duration': 5, 'diagrams': {},
+                'scenes': [{'type':'next','title':'A','start':0,'end':3,'audio_at':.15},
+                           {'type':'diagram','heading':'B','diagram':'d','start':3,'end':5,'audio_at':3.15,
+                            'events':[{'t':3.5}]}],
+                'words':[{'display':'A','start':.15,'end':1}, {'display':'B','start':3.15,'end':4}],
+                'phrases':[{'from':0,'to':0,'start':.15,'end':1}, {'from':1,'to':1,'start':3.15,'end':4}],
+                'beats':[]}
+        sources=[{'type':'next','title':'A','say':'A.'}, {'type':'diagram','heading':'B','diagram':'d','say':'B.'}]
+        local=localize(data,sources)
+        self.assertEqual(local[1]['scene']['events'][0]['t'], .5)
+        self.assertEqual(local[1]['phrases'][0]['from'], 0)
+        local[0]['duration']=4
+        out=m.assemble(local, data['meta'], {})
+        self.assertEqual(out['phrases'][1]['from'], 1)
+        self.assertEqual(out['phrases'][1]['start'], 4.15)
+
+    def test_visual_edit_reuses_audio_and_updates_scene_text(self):
+        from factory.editor_media import change_scene
+        b=bundle()
+        b['base_duration']=3
+        source=dict(b['source'],title='New')
+        with patch('factory.narration.synthesize_spec', side_effect=AssertionError('must not synthesize')):
+            result, diagrams = change_scene(b, source, {}, {}, Path('/tmp'), lambda x: None)
+        self.assertEqual(result['audio'], b['audio'])
+        self.assertEqual(result['scene']['title'], 'New')
+        self.assertEqual(result['words'], b['words'])
+
+    def test_rewrite_changes_speech_and_duration_without_mutating_source(self):
+        from factory.editor_media import change_scene
+        with tempfile.TemporaryDirectory() as folder:
+            b=bundle()
+            source=dict(b['source'],say='Một lời đọc mới dài hơn.')
+            words=[{'text':'Một','start':0,'end':.4}, {'text':'hơn','start':5.5,'end':6}]
+            with patch('factory.narration.synthesize_spec', return_value=(Path('/tmp/fake.mp3'),words,6)), \
+                 patch('factory.editor_media.audio_segment'):
+                result, _ = change_scene(b,source,{}, {},Path(folder),lambda x:None)
+            self.assertGreater(result['duration'],6)
+            self.assertEqual(result['source']['say'],source['say'])
+            self.assertEqual(b['source']['say'],'Xin chào.')
+
+class ValidationTests(unittest.TestCase):
+    def test_malformed_renderer_shapes_are_rejected(self):
+        for scene in [
+            {'type':'title','say':'Xin chào.','headline':'not a list'},
+            {'type':'bullets','say':'Xin chào.','heading':'A','items':['bad']},
+            {'type':'compare','say':'Xin chào.','heading':'A','left':{'title':'A','points':[{}]},'right':{'title':'B','points':[]}},
+            {'type':'next','say':'Xin chào.','title':{'bad':'object'}},
+        ]:
+            with self.assertRaises(ValueError):
+                m.validate_plan({'summary':'Edit','replacements':[{'source_id':'s1','scene':scene}]},[bundle()],['s1'],set())
+
+    def test_conflicting_image_sources_are_rejected(self):
+        with self.assertRaises(ValueError):
+            m.validate_plan({'summary':'Edit','replacements':[{'source_id':'s1','image_asset_id':'x','stock_query':'paper'}]},
+                            [bundle()],['s1'],{'x'})
+
+    def test_stock_query_is_a_supported_edit(self):
+        plan=m.validate_plan({'summary':'Image','replacements':[{'source_id':'s1','stock_query':'paper origami'}]},
+                             [bundle()],['s1'],set())
+        self.assertEqual(plan.replacements[0].stock_query,'paper origami')

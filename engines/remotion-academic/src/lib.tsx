@@ -67,3 +67,16 @@ export const Icon: React.FC<{ name: string; size: number; color: string; width?:
   <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth={width}
     strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: PATHS[name] || "" }} />
 );
+
+
+/** Bounded, frame-driven scene entrance presets for the prompt editor. */
+export function sceneEntrance(t: number, s: Scene): React.CSSProperties {
+  const duration = Math.min(0.5, Math.max(1 / 30, (s.end - s.start) / 3));
+  const p = s.start <= 0.001 ? 1 : out3(clamp((t - s.start) / duration));
+  switch (s.animation) {
+    case "fade": return { opacity: p };
+    case "zoom": return { opacity: p, transform: `scale(${0.92 + p * 0.08})` };
+    case "slide": return { opacity: p, transform: `translateX(${(1 - p) * 70}px)` };
+    default: return { opacity: p, transform: `translateY(${(1 - p) * 40}px)` };
+  }
+}
