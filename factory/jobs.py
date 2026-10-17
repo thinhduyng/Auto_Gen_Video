@@ -79,6 +79,8 @@ def create_job(spec: Spec, engines: list[str]) -> dict:
 def rerun(job_id: str, engine: str) -> None:
     if engine not in ENGINES:
         raise ValueError(f"không có engine {engine}")
+    if (_job_dir(job_id) / "editor" / "state.json").exists() and engine == "remotion":
+        raise ValueError("Video đã có lịch sử chỉnh sửa; dùng trình chỉnh sửa để giữ các phiên bản.")
     with _lock:
         job = load_job(job_id)
         job["engines"][engine] = {"status": "queued"}
@@ -132,7 +134,7 @@ def _probe(video: Path) -> float | None:
         return None
 
 
-def select(job_id: str, engine: str) -> dict:
+def select(job_id: str, engine: str, revision_id: str | None = None) -> dict:
     """Chép video được chọn ra publish/<job_id>/ kèm caption.txt."""
     with _lock:
         job = load_job(job_id)
@@ -145,14 +147,20 @@ def select(job_id: str, engine: str) -> dict:
         out_dir.mkdir(parents=True)
         name = slugify(f"{spec.series or ''} {spec.ep or ''} {spec.title}", 70)
         video = out_dir / f"{name}.mp4"
-        shutil.copy2(_job_dir(job_id) / engine / "video.mp4", video)
+        source = _job_dir(job_id) / engine / "video.mp4"
+        if revision_id is not None:
+            from . import editor
+            if engine != "remotion" or editor.revision(job_id, revision_id)["status"] != "ready":
+                raise ValueError("Phiên bản chưa sẵn sàng.")
+            source = editor.revision_dir(job_id, revision_id) / "video.mp4"
+        shutil.copy2(source, video)
         caption = caption_text(spec)
         credits = _job_dir(job_id) / engine / "credits.txt"   # ảnh Wikimedia Commons: ghi nguồn theo giấy phép
         if credits.exists():
             caption += "\n\n" + credits.read_text(encoding="utf-8").strip()
         (out_dir / "caption.txt").write_text(caption, encoding="utf-8")
         job["selected"] = engine
-        job["published"] = {"video": str(video), "caption": caption, "at": datetime.now().isoformat(timespec="seconds")}
+        job["published"] = {"video": str(video), "caption": caption, "at": datetime.now().isoformat(timespec="seconds"), "revision": revision_id}
         _save(job)
         return job
 

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
-from . import jobs
+from . import jobs, editor
 from .config import CONTENT_DIR, PUBLISH_DIR, RUNS_DIR, WEB_DIR
 from .engines import ENGINES
 from .spec import Spec, slugify
@@ -26,10 +26,13 @@ from .spec import Spec, slugify
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     jobs.recover_interrupted()
+    editor.recover_interrupted()
     yield
 
 
 app = FastAPI(title="Video Factory", lifespan=lifespan)
+from .editor_api import router as editor_router
+app.include_router(editor_router)
 app.mount("/runs", StaticFiles(directory=RUNS_DIR), name="runs")
 app.mount("/publish", StaticFiles(directory=PUBLISH_DIR), name="publish")
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
