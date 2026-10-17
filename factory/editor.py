@@ -66,16 +66,17 @@ def _enqueue(fn, *args):
 
 
 def bootstrap(job_id: str) -> dict:
-    with _lock:
+    from . import jobs
+    with jobs._lock, _lock:
         folder = root(job_id)
         if not (folder / 'state.json').exists():
             job = read_json(folder.parent / 'job.json')
             if job.get('engines', {}).get('remotion', {}).get('status') != 'done':
                 raise ValueError('Cần một video Remotion đã dựng xong.')
-            write_json(folder / 'state.json', {'current': 'baseline', 'requests': {}})
             write_json(folder / 'revisions/baseline/revision.json', {
                 'id': 'baseline', 'parent': None, 'status': 'queued', 'summary': 'Video gốc',
-                'created': datetime.now().isoformat(timespec='seconds')})
+                'created': datetime.now().isoformat(timespec='microseconds')})
+            write_json(folder / 'state.json', {'current': 'baseline', 'requests': {}})
             _enqueue(_import, job_id)
         return state(job_id)
 
@@ -127,7 +128,10 @@ def submit(job_id: str, raw: dict) -> dict:
         folder = root(job_id)
         st = state(job_id)
         if req.request_id in st['requests']:
-            return revision(job_id, st['requests'][req.request_id])
+            existing = st['requests'][req.request_id]
+            if read_json(revision_dir(job_id, existing) / 'request.json') != req.model_dump():
+                raise ValueError('Mã yêu cầu đã dùng cho nội dung khác; hãy gửi yêu cầu mới.')
+            return revision(job_id, existing)
         if req.parent != st['current']:
             raise ValueError('Phiên bản hiện tại đã đổi; hãy tải lại trình chỉnh sửa.')
         if revision(job_id, req.parent)['status'] != 'ready':
@@ -141,9 +145,9 @@ def submit(job_id: str, raw: dict) -> dict:
             asset(job_id, aid)
         rid = uuid.uuid4().hex
         info = {'id': rid, 'parent': req.parent, 'status': 'queued', 'summary': req.prompt[:200],
-                'created': datetime.now().isoformat(timespec='seconds'), 'selected': selected}
-        write_json(revision_dir(job_id, rid) / 'revision.json', info)
+                'created': datetime.now().isoformat(timespec='microseconds'), 'selected': selected}
         write_json(revision_dir(job_id, rid) / 'request.json', req.model_dump())
+        write_json(revision_dir(job_id, rid) / 'revision.json', info)
         st['requests'][req.request_id] = rid
         st.pop('revisions', None)
         write_json(folder / 'state.json', st)
@@ -182,13 +186,13 @@ def _process(job_id: str, rid: str):
                        if i in (positions[0] - 1, positions[-1] + 1)]
             raw = interpret(req['prompt'], chosen, context, imgs, parent['meta'])
             try:
-                validate_plan(raw, parent['bundles'], selected, set(req['assets']))
+                validate_plan(raw, parent['bundles'], selected, set(req['assets']), parent['diagrams'])
             except ValueError:
                 raw = interpret(req['prompt'], chosen, context, imgs, parent['meta'],
                                 repair='Previous response failed scene/schema/scope/cue validation. Return a valid complete plan.')
-            plan = validate_plan(raw, parent['bundles'], selected, set(req['assets']))
+            plan = validate_plan(raw, parent['bundles'], selected, set(req['assets']), parent['diagrams'])
             write_json(plan_path, plan.model_dump())
-        plan = validate_plan(raw, parent['bundles'], selected, set(req['assets']))
+        plan = validate_plan(raw, parent['bundles'], selected, set(req['assets']), parent['diagrams'])
         update(job_id, rid, status='preparing', summary=plan.summary, message='Chuẩn bị cảnh và giọng đọc')
         from .editor_media import prepare_revision, render_revision
         if not (folder / 'bundle.json').exists():

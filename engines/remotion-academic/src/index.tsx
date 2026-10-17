@@ -19,7 +19,7 @@ const Root: React.FC = () => (
     fps={FPS}
     durationInFrames={FPS * 3}
     defaultProps={defaultProps}
-    calculateMetadata={({ props }) => ({ durationInFrames: Math.max(1, Math.ceil(props.data.duration * FPS)) })}
+    calculateMetadata={({ props }) => ({ durationInFrames: Math.max(1, Math.ceil(props.data.duration * FPS - 1e-7)) })}
   />
 );
 

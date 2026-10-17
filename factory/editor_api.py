@@ -40,7 +40,7 @@ def revision(job_id: str, rid: str):
     return editor.detail(job_id, rid)
 
 
-@router.post('/revisions')
+@router.post('/revisions', status_code=202)
 @errors
 def submit(job_id: str, body: dict = Body(...)):
     return editor.submit(job_id, body)

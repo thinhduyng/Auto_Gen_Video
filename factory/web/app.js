@@ -322,6 +322,7 @@ function card(job, key, info, eng) {
       <div class="vbtns">
         <button class="btn ${selected ? "" : "primary"}" data-act="select" data-key="${key}" ${info.status !== "done" ? "disabled" : ""}>${selected ? "Đã chọn" : "Chọn để đăng"}</button>
         <button class="btn" data-act="rerun" data-key="${key}" ${info.status === "running" || info.status === "queued" ? "disabled" : ""}>Chạy lại</button>
+        ${key === "remotion" && info.status === "done" ? '<button class="btn" data-act="edit" data-key="remotion">Chỉnh sửa</button>' : ''}
         <button class="btn" data-act="log" data-key="${key}">Log</button>
       </div>
     </div></div>`;
@@ -333,6 +334,7 @@ function bindCard(job) {
     try {
       if (b.dataset.act === "select") { await api(`/api/jobs/${job.id}/select/${key}`, { method: "POST" }); await loadJobs(); $("detail").dataset.job = ""; renderJob(); }
       if (b.dataset.act === "rerun") { await api(`/api/jobs/${job.id}/rerun/${key}`, { method: "POST" }); $("detail").dataset.job = ""; renderJob(); }
+      if (b.dataset.act === "edit") { await window.openRemotionEditor(job.id); }
       if (b.dataset.act === "log") {
         const r = await api(`/api/jobs/${job.id}/log/${key}`).catch(() => ({ log: "Chưa có log." }));
         $("logTitle").textContent = `Log · ${key}`; $("logText").textContent = r.log; $("logDialog").showModal();
@@ -347,3 +349,8 @@ function bindCard(job) {
   await loadEngines(); await loadPodcastVoices(); await loadContent(); await loadJobs();
   setInterval(loadJobs, 8000);
 })();
+
+if (typeof window !== "undefined") window.addEventListener("editorPublished", async () => {
+  $("detail").dataset.job = "";
+  await loadJobs(); await renderJob();
+});

@@ -121,6 +121,33 @@
   <pre id="logText"></pre>
 </dialog>
 
+<dialog id="editorDialog" aria-labelledby="editTitle">
+  <div class="dialoghead"><div><b id="editTitle">Chỉnh sửa video · Remotion</b><div class="small muted">Chọn cảnh, mô tả thay đổi, rồi xem bản dựng mới.</div></div><button id="editClose" class="btn ghost small">Đóng</button></div>
+  <div class="editor-layout">
+    <section class="editor-preview">
+      <video id="editVideo" controls playsinline preload="metadata"></video>
+      <div class="editor-meta"><span id="editStatus" role="status"></span><span id="editDuration"></span></div>
+      <label for="editVersions">Phiên bản</label><select id="editVersions"></select>
+      <p id="editSummary"></p><div id="editProgress" class="small muted" role="status"></div>
+      <p id="editWarnings" class="small editor-warning"></p>
+      <div class="editor-actions"><button id="editAccept" class="btn primary">Dùng phiên bản này</button><button id="editRetry" class="btn" hidden>Thử lại</button></div>
+      <p id="editCurrentNote" class="small muted"></p>
+      <div class="editor-actions"><button id="editPublish" class="btn">Chọn bản này để đăng</button><a id="editDownload" class="btn ghost" download>Tải bản này</a><button id="editDiscard" class="btn ghost">Bỏ bản xem thử</button></div>
+    </section>
+    <section class="editor-request">
+      <div class="grid2"><div><label for="editStart">Bắt đầu</label><input id="editStart" inputmode="decimal" aria-describedby="editRangeNote"><button id="editMarkStart" class="btn small">Lấy mốc đang xem</button></div><div><label for="editEnd">Kết thúc</label><input id="editEnd" inputmode="decimal" aria-describedby="editRangeNote"><button id="editMarkEnd" class="btn small">Lấy mốc đang xem</button></div></div>
+      <p id="editRangeNote" class="small editor-range" aria-live="polite"></p>
+      <div id="editScenes" class="editor-scenes" aria-label="Các cảnh trong phiên bản này"></div>
+      <label for="editPrompt">Bạn muốn thay đổi gì?</label>
+      <textarea id="editPrompt" rows="4" maxlength="6000" placeholder="Ví dụ: Đổi tiêu đề thành ‘Origami trong vũ trụ’, thay nền bằng ảnh đính kèm và cho chữ xuất hiện lần lượt. Giữ nguyên lời đọc."></textarea>
+      <label for="editImageFiles">Ảnh thay thế hoặc tham khảo · tùy chọn</label><input id="editImageFiles" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+      <div class="small muted">Tối đa 4 ảnh, mỗi ảnh 8 MB. Nói rõ trong yêu cầu nếu ảnh chỉ dùng để tham khảo.</div><div id="editImages" class="editor-images"></div>
+      <button id="editSubmit" class="btn primary">Tạo bản xem thử với Qwen</button>
+      <div id="editNotice" class="msg" role="status" aria-live="polite"></div>
+    </section>
+  </div>
+</dialog>
+<script src="/static/editor.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

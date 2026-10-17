@@ -2,6 +2,7 @@
 
 import copy
 import math
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,10 +31,10 @@ class EditPlan(BaseModel):
 def select_scenes(scenes: list[dict], start: float, end: float) -> list[str]:
     if not scenes or not all(math.isfinite(x) for x in (start, end)) or not 0 <= start < end <= scenes[-1]['end'] + 1e-6:
         raise ValueError('Khoảng thời gian không hợp lệ.')
-    return [s['id'] for s in scenes if s['start'] < end and s['end'] > start]
+    return [s['id'] for s in scenes if s['start'] < end - 1e-6 and s['end'] > start + 1e-6]
 
 
-def validate_plan(raw: dict, bundles: list[dict], selected: list[str], assets: set[str]) -> EditPlan:
+def validate_plan(raw: dict, bundles: list[dict], selected: list[str], assets: set[str], diagrams: dict | None = None) -> EditPlan:
     plan = EditPlan.model_validate(raw)
     sources = {b['id']: b['source'] for b in bundles}
     if not selected or any(s not in sources for s in selected):
@@ -49,6 +50,7 @@ def validate_plan(raw: dict, bundles: list[dict], selected: list[str], assets: s
             raise ValueError('Cảnh mới cần đầy đủ nội dung và lời đọc.')
         if r.scene is not None:
             validate_scene(r.scene)
+            validate_structure(r.scene, diagrams)
             Scene.model_validate(r.scene)
     return plan
 
@@ -56,7 +58,7 @@ def validate_plan(raw: dict, bundles: list[dict], selected: list[str], assets: s
 # Only canonical presentation data may enter the renderer, never file/HTML/code settings.
 SCENE_FIELDS = {'type', 'say', 'tag', 'headline', 'sub', 'chips', 'heading', 'items', 'left', 'right',
                 'stats', 'question', 'answer', 'answer_cue', 'label', 'q_label', 'a_label', 'title',
-                'kicker', 'nodes', 'edges', 'groups', 'steps', 'stock', 'diagram', 'events', 'flow'}
+                'kicker', 'step', 'size', 'direction', 'nodes', 'edges', 'groups', 'steps', 'stock', 'diagram', 'events', 'flow'}
 
 
 def validate_scene(scene: dict) -> None:
@@ -72,8 +74,14 @@ def validate_scene(scene: dict) -> None:
             for k, v in node.items():
                 if k in ('src', 'url', 'path', '__html', 'code') or (k == 'style' and v not in ('solid', 'flow', 'blocked')):
                     raise ValueError('Cảnh chứa tham chiếu hoặc mã không được hỗ trợ.')
-                if k in ('cue', 'answer_cue') and v and v not in say:
-                    raise ValueError('Cue phải trích nguyên văn từ lời đọc của cảnh.')
+                if k in ('cue', 'answer_cue'):
+                    if not isinstance(v,str):
+                        raise ValueError('Cue phải là chuỗi trích nguyên văn từ lời đọc của cảnh.')
+                    if v and v not in say:
+                        match=re.search(re.escape(v),say,re.IGNORECASE)
+                        if match is None:
+                            raise ValueError('Cue phải trích nguyên văn từ lời đọc của cảnh.')
+                        node[k]=match.group(0)
                 walk(v, depth + 1)
         elif isinstance(node, list):
             if len(node) > 60:
@@ -88,6 +96,10 @@ def validate_scene(scene: dict) -> None:
     for key in ('heading','title','sub','tag','question','answer','label','kicker','q_label','a_label'):
         if key in scene and not isinstance(scene[key],str):
             raise ValueError('Chữ hiển thị phải là chuỗi.')
+    if 'step' in scene and not isinstance(scene['step'],(str,int)):
+        raise ValueError('step cần chuỗi hoặc số nguyên.')
+    if 'size' in scene and (not isinstance(scene['size'],(int,float)) or not 50 <= scene['size'] <= 200):
+        raise ValueError('size cần số từ 50 đến 200.')
     if 'headline' in scene:
         h=scene['headline']
         if not isinstance(h,list) or not 1 <= len(h) <= 12 or any(
@@ -106,6 +118,66 @@ def validate_scene(scene: dict) -> None:
                 not isinstance(v,str) for v in obj.get('points',[])):
                 raise ValueError('Cột so sánh cần tiêu đề và danh sách chuỗi.')
 
+
+
+
+def validate_structure(scene: dict, diagrams: dict | None) -> None:
+    def records(key):
+        values=scene.get(key,[])
+        if not isinstance(values,list) or any(not isinstance(v,dict) for v in values):
+            raise ValueError(f'{key} cần danh sách đối tượng.')
+        return values
+    def strings(value):
+        return isinstance(value,list) and all(isinstance(v,str) for v in value)
+    if 'stock' in scene and not strings(scene['stock']):
+        raise ValueError('stock cần danh sách chuỗi.')
+    if scene.get('type')=='flow':
+        if scene.get('direction','down') not in ('down','right'):
+            raise ValueError('direction cần down hoặc right.')
+        nodes,groups,edges,steps=(records(k) for k in ('nodes','groups','edges','steps'))
+        for obj in nodes+groups:
+            if not isinstance(obj.get('id'),str) or not isinstance(obj.get('label'),str):
+                raise ValueError('Nút/nhóm cần id và label là chuỗi.')
+            for key in ('icon','group','parent','kind','tone'):
+                if key in obj and obj[key] is not None and not isinstance(obj[key],str):
+                    raise ValueError('Thuộc tính nút/nhóm không hợp lệ.')
+        ids=[x['id'] for x in nodes+groups]
+        if len(ids)!=len(set(ids)):
+            raise ValueError('ID nút và nhóm phải duy nhất.')
+        parents={g['id']:g.get('parent') for g in groups}
+        for gid in parents:
+            seen=set()
+            while gid:
+                if gid in seen:
+                    raise ValueError('Nhóm sơ đồ không được tạo vòng lặp.')
+                seen.add(gid)
+                gid=parents.get(gid)
+        for edge in edges:
+            if any(not isinstance(edge.get(k),str) for k in ('from','to')):
+                raise ValueError('Mũi tên cần from/to là chuỗi.')
+            if 'label' in edge and not isinstance(edge['label'],str):
+                raise ValueError('Nhãn mũi tên cần là chuỗi.')
+        for step in steps:
+            if any(not strings(step.get(k,[])) for k in ('show','focus')):
+                raise ValueError('show/focus cần danh sách ID.')
+    if scene.get('type')=='diagram':
+        did=scene.get('diagram')
+        if not isinstance(did,str) or (diagrams is not None and did not in diagrams):
+            raise ValueError('Tham chiếu sơ đồ không tồn tại.')
+        known={e['id'] for e in diagrams[did].get('elements',[])} if diagrams is not None else None
+        for event in records('events'):
+            for key in ('show','focus'):
+                values=event.get(key,[])
+                if not strings(values) or (known is not None and any(x not in known for x in values)):
+                    raise ValueError('Sự kiện tham chiếu phần tử sơ đồ không hợp lệ.')
+            additions=event.get('add',[])
+            if isinstance(additions,dict):
+                additions=[additions]
+            if not isinstance(additions,list) or any(not isinstance(v,dict) or not isinstance(v.get('id'),str)
+                or not isinstance(v.get('cls'),str) or (known is not None and v['id'] not in known) for v in additions):
+                raise ValueError('add cần id/cls hợp lệ.')
+            if 't' in event and (not isinstance(event['t'],(int,float)) or not math.isfinite(event['t'])):
+                raise ValueError('Mốc sự kiện không hợp lệ.')
 
 
 def shift_scene(scene: dict, offset: float) -> dict:

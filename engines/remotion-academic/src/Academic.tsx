@@ -104,7 +104,7 @@ export const Academic: React.FC<Props> = (props) => {
       {groups.map((g, i) => {
         const a = sceneAlpha(t, g.start, g.end);
         const active = scenes.find((s) => s.diagram === g.id && t >= s.start && t < s.end);
-        const entrance = active ? sceneEntrance(t, active) : {};
+        const entrance = active?.animation && active.animation !== "default" ? sceneEntrance(t, active) : {};
         return a > 0 ? <AbsoluteFill key={i} style={entrance}><DiagramLayer diagram={diagrams[g.id]} scenes={scenes} id={g.id} t={t} opacity={a} /></AbsoluteFill> : null;
       })}
       <Captions data={props.data} t={t} />

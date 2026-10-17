@@ -642,3 +642,66 @@ Nhạc: chỉ dùng nhạc bạn có quyền dùng. Giọng ElevenLabs: theo đi
 
 Tài liệu thêm: [ghi chú kỹ thuật](docs/ghi-chu-ky-thuat.md) · [đánh giá ưu / nhược từng engine](docs/danh-gia-cac-repo-video.docx) ·
 [khảo sát xu hướng TikTok 09/2026](docs/xu-huong-tiktok-2026-09.md) · [so sánh hình ảnh các engine](docs/so-sanh-01-10/)
+
+## Chỉnh sửa Remotion bằng Qwen
+
+Mở một lần tạo đã hoàn tất → **Chỉnh sửa** trên thẻ Remotion. Đánh dấu hai mốc
+thời gian hoặc chọn một cảnh, nhập yêu cầu và đính kèm ảnh nếu cần. Trình chỉnh sửa
+hiển thị toàn bộ các cảnh sẽ thay đổi trước khi gửi. Các mốc chọn được mở rộng ra
+các cảnh giao nhau; không sửa riêng một phần giây bên trong cảnh.
+
+Ví dụ: “Thay tiêu đề bằng ‘Origami trong vũ trụ’, dùng ảnh đính kèm làm nền và
+cho các ý xuất hiện lần lượt. Giữ nguyên lời đọc.” Có thể yêu cầu đổi lời đọc,
+thay kiểu cảnh hoặc chia một cảnh thành nhiều cảnh. Khi lời đọc thay đổi, VieNeu
+phải đang chạy; thời lượng và toàn bộ mốc phụ đề/cảnh phía sau được tính lại.
+Ảnh và chữ có thể dùng các hiệu ứng fade, slide, zoom, stagger; không tạo video
+hay hình ảnh mới bằng AI.
+
+Cấu hình riêng trong `.env` (không đưa key lên Git):
+
+```dotenv
+EDITOR_LLM_BASE_URL=<base URL OpenAI-compatible của nhà cung cấp, kết thúc /v1>
+EDITOR_LLM_API_KEY=<API key Qwen>
+EDITOR_LLM_MODEL=qwen3.7-plus
+```
+
+Endpoint cần hỗ trợ Chat Completions, JSON object response, `enable_thinking=false`
+và image input khi dùng ảnh tham khảo. Có thể đổi model sang một model Qwen khác
+mà nhà cung cấp hỗ trợ. Lỗi chỉnh sửa không tự chuyển sang Gemini. Các chức năng
+viết nháp/tìm ảnh hiện có vẫn dùng cấu hình Gemini riêng. Yêu cầu thay ảnh stock
+cần key Pixabay/Pexels; ảnh tải lên không cần key stock. Chỉ gửi nội dung cảnh và
+ảnh đính kèm cho Qwen, không gửi toàn bộ MP4.
+
+Mỗi lần chỉnh sửa tạo bản xem thử riêng. **Dùng phiên bản này** chọn nguồn cho lần
+sửa tiếp theo; có thể chọn lại Video gốc để hoàn tác. **Chọn bản này để đăng** mới
+cập nhật thư mục `publish/`. Thử lại lỗi render dùng kế hoạch đã lưu, không gọi lại
+Qwen; lỗi diễn giải có thể cần một lần gọi API mới. Đóng/mở cửa sổ không làm mất
+lịch sử. Không dùng **Chạy lại** Remotion sau khi đã mở trình chỉnh sửa; thao tác đó
+bị chặn để bảo vệ nguồn và lịch sử.
+
+Nguồn chỉnh sửa lưu ở `runs/<job>/editor/`; các bản render mới giữ ảnh và giọng ở
+`runs/<job>/remotion/sources/`. Với video cũ, editor tìm lại ảnh từ nguồn đã lưu
+hoặc bản HyperFrames cùng job khi metadata trùng khớp, và trích giọng từ MP4 gốc.
+Thiếu ảnh sẽ có thông báo yêu cầu thay ảnh cho cảnh đó. Giữ nguyên thư mục job và
+nguồn media; không xóa các thư mục này nếu muốn tiếp tục chỉnh sửa. Bản đầu tiên
+render lại toàn bộ video, nên thời gian dựng gần với Remotion bình thường.
+
+Kiểm tra API thực tế, chỉ gọi Qwen và xác minh kế hoạch:
+
+```bash
+python -m factory.editor_smoke --job 20261010-131144-origami-khoa-hoc-vu-tru --api-only
+```
+
+Dựng một bản xem thử bằng kế hoạch Qwen, không tự chọn/đăng:
+
+```bash
+python -m factory.editor_smoke --job 20261010-131144-origami-khoa-hoc-vu-tru --render
+```
+
+Kiểm tra tự động: `python -m unittest discover -s tests -p 'test_*.py'`,
+`node tests/test_editor_ui.cjs`, `node tests/test_editor_workflow.cjs`,
+`node tests/test_editor_remotion.cjs`, `node tests/test_tts_ui.cjs` và
+`engines/remotion-academic/node_modules/.bin/tsc --noEmit -p engines/remotion-academic/tsconfig.json`.
+Các bài kiểm tra server/Chrome cần môi trường cho phép tạo socket và khởi động
+trình duyệt; live Qwen cần mạng ra ngoài. Kiểm tra editor bằng dữ liệu mẫu không
+phát sinh phí API.

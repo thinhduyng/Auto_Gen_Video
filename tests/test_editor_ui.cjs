@@ -1,0 +1,15 @@
+const assert = require('node:assert/strict');
+const tools = require('../factory/web/editor.js');
+assert.equal(tools.parseTime('01:03.5'),63.5);
+assert.equal(tools.parseTime('3.25'),3.25);
+assert.equal(tools.parseTime('1:02:03'),3723);
+for (const v of ['abc','-1','1:70','', 'Infinity']) assert.throws(()=>tools.parseTime(v));
+const scenes=[{id:'a',start:0,end:3},{id:'b',start:3,end:5}];
+assert.deepEqual(tools.selectedScenes(scenes,0,3).map(s=>s.id),['a']);
+assert.deepEqual(tools.selectedScenes(scenes,2.5,4).map(s=>s.id),['a','b']);
+assert.equal(tools.formatTime(63.5),'01:03.50');
+assert.equal(tools.canEdit({status:'ready',id:'a'}, {current:'a',revisions:[]}),true);
+assert.equal(tools.canEdit({status:'ready',id:'a'}, {current:'b',revisions:[]}),false);
+assert.equal(tools.canEdit({status:'ready',id:'a'}, {current:'a',revisions:[{status:'rendering'}]}),false);
+console.log('Editor UI behavior tests passed');
+assert.deepEqual(tools.selectedScenes([{id:'a',start:0,end:8.933333333},{id:'b',start:8.933333333,end:10}],8.933333,10).map(s=>s.id),['b']);

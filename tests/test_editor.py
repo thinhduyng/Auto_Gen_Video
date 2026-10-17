@@ -74,11 +74,7 @@ class QwenTests(unittest.TestCase):
         self.assertNotIn('secret-value', str(ctx.exception))
         self.assertIn('401', str(ctx.exception))
 
-
-if __name__ == '__main__':
-    unittest.main()
-
-class StoreTests(unittest.TestCase):
+class StoreFixture(unittest.TestCase):
     def setUp(self):
         from factory import editor
         self.editor = editor
@@ -98,6 +94,8 @@ class StoreTests(unittest.TestCase):
         self.editor.write_json(job / 'editor/revisions/baseline/bundle.json',
                                {'bundles': [bundle()], 'meta': {'title': 'Test'}, 'diagrams': {}})
 
+
+class StoreTests(StoreFixture):
     def test_path_traversal_rejected(self):
         for name in ('../escape', 'a/b', '.', ''):
             with self.assertRaises(ValueError):
@@ -131,7 +129,7 @@ class StoreTests(unittest.TestCase):
             self.editor.upload('job', b'not an image', 'bad.svg')
         self.assertFalse(list((self.root / 'job/editor/assets').glob('*.json')))
 
-class ApiTests(StoreTests):
+class ApiTests(StoreFixture):
     def test_editor_routes_return_timeline_and_reject_invalid_range(self):
         from fastapi import HTTPException
         from factory.app import app
@@ -214,3 +212,148 @@ class ValidationTests(unittest.TestCase):
         plan=m.validate_plan({'summary':'Image','replacements':[{'source_id':'s1','stock_query':'paper origami'}]},
                              [bundle()],['s1'],set())
         self.assertEqual(plan.replacements[0].stock_query,'paper origami')
+
+class RevisionPipelineTests(StoreFixture):
+    def test_render_retry_reuses_plan_and_keeps_original(self):
+        from factory import editor_llm, editor_media
+        request={'parent':'baseline','start':0,'end':3,'prompt':'Change title','request_id':'pipeline'}
+        with patch.object(self.editor,'_enqueue'):
+            info=self.editor.submit('job',request)
+        plan={'summary':'Updated title','replacements':[{'source_id':'s1','scene':{
+              'type':'next','title':'Origami mới','say':'Xin chào.'}}]}
+        with patch.object(editor_llm,'interpret',return_value=plan) as llm, \
+             patch.object(editor_media,'render_revision',side_effect=[RuntimeError('render failed'),None]):
+            self.editor._process('job',info['id'])
+            self.assertEqual(self.editor.revision('job',info['id'])['status'],'failed')
+            self.editor._process('job',info['id'])
+            self.assertEqual(self.editor.revision('job',info['id'])['status'],'ready')
+            self.assertEqual(llm.call_count,1)
+        new=self.editor.read_json(self.editor.revision_dir('job',info['id'])/'bundle.json')
+        self.assertEqual(new['bundles'][0]['source']['title'],'Origami mới')
+        old=self.editor.read_json(self.editor.revision_dir('job','baseline')/'bundle.json')
+        self.assertEqual(old['bundles'][0]['source']['title'],'Hello')
+        self.assertEqual(self.editor.state('job')['current'],'baseline')
+
+    def test_valid_image_upload_is_normalized_and_referenced_by_id(self):
+        import subprocess
+        image=subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=blue:s=64x64',
+                              '-frames:v','1','-f','image2pipe','-vcodec','png','pipe:1'],
+                             capture_output=True,check=True).stdout
+        info=self.editor.upload('job',image,'../../image.png')
+        saved=self.editor.asset('job',info['id'])
+        self.assertEqual(saved['name'],'image.png')
+        self.assertTrue(Path(saved['path']).is_file())
+        self.assertEqual(Path(saved['path']).parent,self.root/'job/editor/assets')
+
+    def test_idempotency_key_cannot_be_reused_for_different_request(self):
+        with patch.object(self.editor,'_enqueue'):
+            req={'parent':'baseline','start':0,'end':3,'prompt':'Change title','request_id':'same'}
+            self.editor.submit('job',req)
+            req['prompt']='Different request'
+            with self.assertRaises(ValueError):
+                self.editor.submit('job',req)
+
+class DiagramValidationTests(unittest.TestCase):
+    def test_origami_flow_direction_survives_validation(self):
+        scene={'type':'flow','heading':'Flow','say':'Bước một. Bước hai.','direction':'right',
+               'nodes':[{'id':'a','label':'A'},{'id':'b','label':'B'}],
+               'edges':[{'from':'a','to':'b','style':'flow'}],
+               'steps':[{'cue':'Bước một','show':['a']},{'cue':'Bước hai','show':['b']}]}
+        plan=m.validate_plan({'summary':'Flow','replacements':[{'source_id':'s1','scene':scene}]},[bundle()],['s1'],set())
+        self.assertEqual(plan.replacements[0].scene['direction'],'right')
+
+    def test_invalid_cue_types_and_diagram_events_raise_value_error(self):
+        scenes=[{'type':'next','title':'A','say':'Xin chào.','chips':[{'text':'A','cue':123}]},
+                {'type':'diagram','heading':'A','say':'Xin chào.','diagram':'d','events':{'show':['a']}},
+                {'type':'diagram','heading':'A','say':'Xin chào.','diagram':'d','events':[{'show':['missing']}]}]
+        for scene in scenes:
+            with self.assertRaises(ValueError):
+                m.validate_plan({'summary':'Edit','replacements':[{'source_id':'s1','scene':scene}]},
+                                [bundle()],['s1'],set(),{'d':{'elements':[{'id':'a'}]}})
+
+class ConcurrencyTests(StoreFixture):
+    def test_bootstrap_and_rerun_cannot_both_claim_completed_source(self):
+        import shutil, threading
+        from factory import jobs
+        shutil.rmtree(self.root/'job/editor')
+        entering,release=threading.Event(),threading.Event()
+        original=self.editor.write_json
+        failures=[]
+        def write(path,value):
+            if path.name=='state.json':
+                entering.set()
+                release.wait(2)
+            return original(path,value)
+        def rerun():
+            try: jobs.rerun('job','remotion')
+            except ValueError: failures.append('protected')
+        with patch.object(jobs,'RUNS_DIR',self.root), patch.object(self.editor,'write_json',side_effect=write), \
+             patch.object(self.editor,'_enqueue'),patch.object(jobs._pool,'submit') as render:
+            a=threading.Thread(target=lambda:self.editor.bootstrap('job'))
+            a.start();self.assertTrue(entering.wait(2))
+            b=threading.Thread(target=rerun);b.start()
+            b.join(.03)
+            release.set();a.join(2);b.join(2)
+            self.assertEqual(render.call_count,0)
+            self.assertEqual(failures,['protected'])
+
+class LegacyCueTests(unittest.TestCase):
+    def test_case_only_legacy_cue_is_canonicalized_to_narration(self):
+        scene={'type':'bullets','heading':'Robot','say':'robot nuốt được từ ruột sấy khô.',
+               'items':[{'text':'Robot','cue':'Robot nuốt được từ ruột sấy khô'}]}
+        plan=m.validate_plan({'summary':'Keep','replacements':[{'source_id':'s1','scene':scene}]},[bundle()],['s1'],set())
+        self.assertEqual(plan.replacements[0].scene['items'][0]['cue'],'robot nuốt được từ ruột sấy khô')
+
+    def test_title_size_uses_bounded_number(self):
+        scene={'type':'title','say':'Xin chào.','headline':[['Chào',True]],'size':140}
+        plan=m.validate_plan({'summary':'Title','replacements':[{'source_id':'s1','scene':scene}]},[bundle()],['s1'],set())
+        self.assertEqual(plan.replacements[0].scene['size'],140)
+
+class HTTPTests(StoreFixture):
+    def test_asgi_routes_serialize_timeline_and_submit_revision(self):
+        import asyncio, httpx
+        from factory.app import app
+        async def check():
+            # Keep the loop responsive even on hosts denying asyncio wakeup socket writes.
+            async def tick():
+                while True:
+                    await asyncio.sleep(.01)
+            ticker=asyncio.create_task(tick())
+            try:
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
+                    result=await client.get('/api/jobs/job/editor/revisions/baseline')
+                    self.assertEqual(result.status_code,200)
+                    self.assertEqual(result.json()['scenes'][0]['id'],'s1')
+                    result=await client.post('/api/jobs/job/editor/revisions',json={
+                        'parent':'baseline','start':0,'end':3,'prompt':'Change title','request_id':'http'})
+                    self.assertEqual(result.status_code,202)
+                    self.assertEqual(result.json()['status'],'queued')
+                    result=await client.post('/api/jobs/job/editor/revisions',json={'prompt':'bad'})
+                    self.assertEqual(result.status_code,422)
+            finally:
+                ticker.cancel()
+        with patch.object(self.editor,'_enqueue'):
+            asyncio.run(check())
+
+class MissingFieldTests(unittest.TestCase):
+    def test_missing_scene_type_is_a_repairable_validation_error(self):
+        with self.assertRaises(ValueError):
+            m.validate_plan({'summary':'Edit','replacements':[{'source_id':'s1','scene':{'say':'Xin chào.','title':'A'}}]},
+                            [bundle()],['s1'],set())
+
+class AtomicStoreTests(StoreFixture):
+    def test_failed_baseline_creation_does_not_leave_dangling_current_pointer(self):
+        import shutil
+        shutil.rmtree(self.root/'job/editor')
+        original=self.editor.write_json
+        def fail_revision(path,value):
+            if path.name=='revision.json':
+                raise OSError('disk failure')
+            original(path,value)
+        with patch.object(self.editor,'write_json',side_effect=fail_revision), patch.object(self.editor,'_enqueue'):
+            with self.assertRaises(OSError):self.editor.bootstrap('job')
+        self.assertFalse((self.root/'job/editor/state.json').exists())
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -79,9 +79,9 @@ def create_job(spec: Spec, engines: list[str]) -> dict:
 def rerun(job_id: str, engine: str) -> None:
     if engine not in ENGINES:
         raise ValueError(f"không có engine {engine}")
-    if (_job_dir(job_id) / "editor" / "state.json").exists() and engine == "remotion":
-        raise ValueError("Video đã có lịch sử chỉnh sửa; dùng trình chỉnh sửa để giữ các phiên bản.")
     with _lock:
+        if (_job_dir(job_id) / "editor" / "state.json").exists() and engine == "remotion":
+            raise ValueError("Video đã có lịch sử chỉnh sửa; dùng trình chỉnh sửa để giữ các phiên bản.")
         job = load_job(job_id)
         job["engines"][engine] = {"status": "queued"}
         _save(job)
